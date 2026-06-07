@@ -23,6 +23,7 @@ import { getFunnelCounts } from "../src/db/models.js";
 import {
   parseSheetRows,
   loadProspects,
+  loadBlocklist,
 } from "../src/import/prospects-import.js";
 
 const SHEET_ID =
@@ -68,8 +69,21 @@ async function main(): Promise<void> {
   console.log(`   Modo:  ${DRY_RUN ? "DRY RUN (sin escribir DB)" : "LIVE"}`);
   if (LIMIT) console.log(`   Limit: primeros ${LIMIT}`);
 
+  const blocklist = loadBlocklist();
+  console.log(`   Blocklist activa: ${blocklist.size} número(s) protegido(s).`);
+  if (!process.env["OUTREACH_BLOCKLIST"]) {
+    console.warn(
+      "   ⚠️  OUTREACH_BLOCKLIST no está en el entorno — solo el número bot " +
+        "por defecto está protegido. Añade tu línea personal en .env.",
+    );
+  }
+
   const values = await fetchSheetValues();
-  const { mapping, prospects, skipped } = parseSheetRows(values);
+  const { mapping, prospects, skipped } = parseSheetRows(
+    values,
+    undefined,
+    blocklist,
+  );
 
   console.log(`\n   Mapping de columnas detectado:`);
   console.log(

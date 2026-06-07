@@ -5,30 +5,40 @@ import { jidToNumber } from "../util/phone.js";
 
 export const DEFAULT_SOURCE = "denue-iztapalapa-2026-06";
 
-/**
- * Numbers that must NEVER enter the outreach pipeline, by their bare 10-digit
- * tail (prefix-agnostic):
- *   5530331051 = operator's PERSONAL line — a ban here is catastrophic.
- *   5640501088 = salones-wa PRODUCT/bot line — product-only, never outreach.
- * The import is the only P0 ingress, so the invariant is enforced here, before
- * any future sender (P3) can ever read the table. See OUTREACH-SENDER-SPEC §1.
- */
-export const FORBIDDEN_TAILS: ReadonlySet<string> = new Set([
-  "5530331051",
-  "5640501088",
-]);
-
 /** Last 10 digits of a number, ignoring 52/521 prefixes and any formatting. */
 function tail10(num: string): string {
   const digits = num.replace(/\D/g, "");
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
 
-/** True if either the JID or the raw phone resolves to a protected number. */
-export function isForbiddenNumber(wa_jid: string, phone_raw: string): boolean {
-  return [jidToNumber(wa_jid), phone_raw].some((v) =>
-    FORBIDDEN_TAILS.has(tail10(v)),
-  );
+/**
+ * Numbers that must NEVER enter the outreach pipeline. The product/bot line
+ * (`5640501088`, a public business number) is a hardcoded baseline so the guard
+ * is never accidentally empty. The operator's PERSONAL line is deliberately NOT
+ * in source — add it (and any others) via the `OUTREACH_BLOCKLIST` env var
+ * (comma-separated), which lives only in the gitignored `.env`. The import is
+ * the sole ingress, so the invariant is enforced here. See OUTREACH-SENDER-SPEC §1.
+ */
+const DEFAULT_BLOCKLIST = ["5640501088"];
+
+/** Build the active blocklist (10-digit tails) from the default + env. */
+export function loadBlocklist(
+  env: Record<string, string | undefined> = process.env,
+): ReadonlySet<string> {
+  const extra = (env["OUTREACH_BLOCKLIST"] ?? "")
+    .split(",")
+    .map((s) => tail10(s))
+    .filter((s) => s.length > 0);
+  return new Set([...DEFAULT_BLOCKLIST.map(tail10), ...extra]);
+}
+
+/** True if either the JID or the raw phone resolves to a blocked number. */
+export function isForbiddenNumber(
+  wa_jid: string,
+  phone_raw: string,
+  blocklist: ReadonlySet<string>,
+): boolean {
+  return [jidToNumber(wa_jid), phone_raw].some((v) => blocklist.has(tail10(v)));
 }
 
 /** Result of mapping the sheet headers to the columns we care about. */
@@ -81,11 +91,13 @@ const cell = (row: string[], idx: number): string =>
  *    absent we assume the sheet is already the validated export and keep all.
  *  - In-batch duplicate wa_jids are collapsed to the first occurrence.
  *
- * Pure: no DB, no network — unit-testable with fixture values.
+ * Pure: no DB, no network — unit-testable with fixture values. The blocklist
+ * defaults to the env-derived set (`loadBlocklist()`); tests pass an explicit one.
  */
 export function parseSheetRows(
   values: string[][],
   source: string = DEFAULT_SOURCE,
+  blocklist: ReadonlySet<string> = loadBlocklist(),
 ): ParseResult {
   if (!values || values.length < 2) {
     throw new Error("Sheet vacío o sin filas de datos");
@@ -122,7 +134,7 @@ export function parseSheetRows(
     }
 
     const phone_raw = cell(row, mapping.phone);
-    if (isForbiddenNumber(wa_jid, phone_raw)) {
+    if (isForbiddenNumber(wa_jid, phone_raw, blocklist)) {
       skipped.push({ rowIndex, reason: "número protegido (no-outreach)" });
       continue;
     }

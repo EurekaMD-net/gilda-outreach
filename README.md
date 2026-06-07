@@ -92,10 +92,12 @@ npm start             # P0 bootstrap: opens DB, prints funnel summary
 ## Guardrails (carried from the spec)
 
 - **`OUTREACH_ENABLED=false` by default.** No send path even exists yet.
-- The personal number `5530331051` and the product/bot number `5640501088` are
-  **never** used for outreach. This is **enforced in code**, not just policy:
-  the import (`isForbiddenNumber`, the sole P0 ingress) drops any row resolving
-  to either number — prefix-agnostic, checked against both the JID and the raw
-  phone column. This service targets a separate, dedicated SIM.
+- Protected numbers are **never** messaged — **enforced in code**, not just
+  policy: the import (`isForbiddenNumber`, the sole ingress) drops any row
+  resolving to a blocked number (prefix-agnostic, checked against both the JID
+  and the raw phone column). The product/bot line `5640501088` is blocked by
+  default; the operator's **personal line is supplied via `OUTREACH_BLOCKLIST`
+  in the gitignored `.env`** — deliberately never in committed source. This
+  service targets a separate, dedicated SIM.
 - Cold outreach is unsolicited — keep volume low, personalized, business-hours,
   always with an opt-out line, and honor opt-outs permanently.

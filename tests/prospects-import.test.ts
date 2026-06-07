@@ -7,6 +7,7 @@ import {
   parseSheetRows,
   loadProspects,
   isForbiddenNumber,
+  loadBlocklist,
 } from "../src/import/prospects-import.js";
 
 const JID_A = "525512345678@s.whatsapp.net";
@@ -93,29 +94,55 @@ describe("parseSheetRows", () => {
   });
 });
 
+describe("loadBlocklist", () => {
+  const BOT = "5640501088"; // hardcoded default (public product number)
+
+  it("always includes the default bot number, even with no env", () => {
+    const bl = loadBlocklist({});
+    expect(bl.has(BOT)).toBe(true);
+    expect(bl.size).toBe(1);
+  });
+
+  it("adds env numbers, normalized to 10-digit tails", () => {
+    const bl = loadBlocklist({
+      OUTREACH_BLOCKLIST: "5500000001, 521 55 0000 1111, +52 5599998888",
+    });
+    expect(bl.has(BOT)).toBe(true); // default kept
+    expect(bl.has("5500000001")).toBe(true);
+    expect(bl.has("5500001111")).toBe(true); // 521-prefixed -> tail
+    expect(bl.has("5599998888")).toBe(true); // +52-prefixed -> tail
+  });
+
+  it("ignores empty / blank entries", () => {
+    expect(loadBlocklist({ OUTREACH_BLOCKLIST: " , ,, " }).size).toBe(1);
+  });
+});
+
 describe("forbidden-number guardrail", () => {
-  const PERSONAL = "5530331051"; // operator personal — ban-catastrophic
+  const PERSONAL = "5500000001"; // fake stand-in for a personal line (real one lives in .env)
   const BOT = "5640501088"; // salones-wa product/bot — never outreach
+  // Explicit test blocklist (personal lives in .env in prod, not in source).
+  const BL: ReadonlySet<string> = new Set([PERSONAL, BOT]);
 
   it.each([
     [`52${PERSONAL}@s.whatsapp.net`, "525511112222"],
     [`521${PERSONAL}@s.whatsapp.net`, "5500001111"],
     [`52${BOT}@s.whatsapp.net`, "5512345678"],
   ])("flags %s as forbidden via the jid", (jid, phone) => {
-    expect(isForbiddenNumber(jid, phone)).toBe(true);
+    expect(isForbiddenNumber(jid, phone, BL)).toBe(true);
   });
 
   it("flags a protected number that only appears in the phone column", () => {
     expect(
-      isForbiddenNumber("525599998888@s.whatsapp.net", `55 ${BOT.slice(2)}`),
+      isForbiddenNumber("525599998888@s.whatsapp.net", "5511112222", BL),
     ).toBe(false); // sanity: a different number is allowed
-    expect(isForbiddenNumber("525599998888@s.whatsapp.net", PERSONAL)).toBe(
+    expect(isForbiddenNumber("525599998888@s.whatsapp.net", PERSONAL, BL)).toBe(
       true,
     );
   });
 
   it("allows an ordinary prospect number", () => {
-    expect(isForbiddenNumber(JID_A, "5512345678")).toBe(false);
+    expect(isForbiddenNumber(JID_A, "5512345678", BL)).toBe(false);
   });
 
   it("drops protected rows from a parsed sheet (never imported)", () => {
@@ -125,11 +152,22 @@ describe("forbidden-number guardrail", () => {
       ["Mi Personal", "X", PERSONAL, "SI", `52${PERSONAL}@s.whatsapp.net`],
       ["Bot Gilda", "Y", BOT, "SI", `52${BOT}@s.whatsapp.net`],
     ];
-    const { prospects, skipped } = parseSheetRows(sheet);
+    const { prospects, skipped } = parseSheetRows(sheet, undefined, BL);
     expect(prospects.map((p) => p.wa_jid)).toEqual([JID_A]);
     expect(skipped.filter((s) => s.reason.includes("protegido"))).toHaveLength(
       2,
     );
+  });
+
+  it("with the default env blocklist, only the bot number is dropped", () => {
+    const sheet: string[][] = [
+      ["nom_estab", "colonia", "telefono", "WA_VALIDO", "WA_JID"],
+      ["Cliente OK", "Santa Martha", "5512345678", "SI", JID_A],
+      ["Bot Gilda", "Y", BOT, "SI", `52${BOT}@s.whatsapp.net`],
+    ];
+    // No explicit blocklist -> loadBlocklist() default ({BOT}) applies.
+    const { prospects } = parseSheetRows(sheet);
+    expect(prospects.map((p) => p.wa_jid)).toEqual([JID_A]);
   });
 });
 
