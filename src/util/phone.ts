@@ -30,3 +30,16 @@ export function jidToNumber(jid: string): string {
   const at = jid.indexOf("@");
   return (at === -1 ? jid : jid.slice(0, at)).trim();
 }
+
+/**
+ * Last 10 digits of a number (the MX local number), ignoring 52/521 country
+ * prefixes and any formatting. Used as a prefix-agnostic identity key so an
+ * inbound JID (`521…`) matches an imported prospect (`52…`) and vice-versa.
+ *   "525512345678"  -> "5512345678"
+ *   "5215512345678" -> "5512345678"
+ *   "55 1234 5678"  -> "5512345678"
+ */
+export function tail10(num: string): string {
+  const digits = num.replace(/\D/g, "");
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}

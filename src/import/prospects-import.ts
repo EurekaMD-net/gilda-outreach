@@ -1,15 +1,9 @@
 import { randomUUID } from "crypto";
 import type Database from "better-sqlite3";
 import { upsertProspect, type ProspectImport } from "../db/models.js";
-import { jidToNumber } from "../util/phone.js";
+import { jidToNumber, tail10 } from "../util/phone.js";
 
 export const DEFAULT_SOURCE = "denue-iztapalapa-2026-06";
-
-/** Last 10 digits of a number, ignoring 52/521 prefixes and any formatting. */
-function tail10(num: string): string {
-  const digits = num.replace(/\D/g, "");
-  return digits.length > 10 ? digits.slice(-10) : digits;
-}
 
 /**
  * Numbers that must NEVER enter the outreach pipeline. The product/bot line

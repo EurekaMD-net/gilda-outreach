@@ -1,4 +1,6 @@
 import type Database from "better-sqlite3";
+import { randomUUID } from "crypto";
+import { jidToNumber, tail10 } from "../util/phone.js";
 
 export type ProspectStatus =
   | "pending"
@@ -130,4 +132,90 @@ export function listProspectsByStatus(
       "SELECT * FROM prospects WHERE status = ? ORDER BY imported_at ASC LIMIT ?",
     )
     .all(status, limit) as Prospect[];
+}
+
+export function setProspectStatus(
+  db: Database.Database,
+  prospectId: string,
+  status: ProspectStatus,
+): void {
+  db.prepare("UPDATE prospects SET status = ? WHERE id = ?").run(
+    status,
+    prospectId,
+  );
+}
+
+/**
+ * Find the prospect an inbound JID belongs to: exact wa_jid first, then by the
+ * 10-digit tail (so a `521…` inbound matches a `52…` import and vice-versa).
+ * The tail fallback is a full table scan — fine at pilot scale (~hundreds of
+ * rows); revisit with a normalized column if the table ever grows large.
+ */
+export function findProspectForInbound(
+  db: Database.Database,
+  jid: string,
+): Prospect | undefined {
+  const exact = getProspectByJid(db, jid);
+  if (exact) return exact;
+  const wanted = tail10(jidToNumber(jid));
+  // Require a full 10-digit tail; never partial-match on a short/garbage number.
+  if (wanted.length < 10) return undefined;
+  const all = db.prepare("SELECT * FROM prospects").all() as Prospect[];
+  return all.find((p) => tail10(jidToNumber(p.wa_jid)) === wanted);
+}
+
+/**
+ * Record that a prospect replied: bump reply_count and stamp first_reply_at on
+ * the first inbound only (COALESCE keeps the earliest). Status transitions are
+ * the receiver's job — this only touches the reply bookkeeping.
+ */
+export function recordInboundReply(
+  db: Database.Database,
+  prospectId: string,
+): void {
+  db.prepare(
+    `UPDATE prospects
+       SET reply_count = reply_count + 1,
+           first_reply_at = COALESCE(first_reply_at, unixepoch())
+     WHERE id = ?`,
+  ).run(prospectId);
+}
+
+export type MessageDirection = "in" | "out";
+
+export interface Message {
+  id: string;
+  prospect_id: string;
+  direction: MessageDirection;
+  body: string | null;
+  wa_msg_id: string | null;
+  created_at: number;
+}
+
+export function insertMessage(
+  db: Database.Database,
+  m: {
+    prospect_id: string;
+    direction: MessageDirection;
+    body?: string | null;
+    wa_msg_id?: string | null;
+  },
+): string {
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO messages (id, prospect_id, direction, body, wa_msg_id)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(id, m.prospect_id, m.direction, m.body ?? null, m.wa_msg_id ?? null);
+  return id;
+}
+
+export function getMessagesForProspect(
+  db: Database.Database,
+  prospectId: string,
+): Message[] {
+  return db
+    .prepare(
+      "SELECT * FROM messages WHERE prospect_id = ? ORDER BY created_at ASC, rowid ASC",
+    )
+    .all(prospectId) as Message[];
 }

@@ -12,20 +12,22 @@ product bot. Full design: [`docs/OUTREACH-SENDER-SPEC.md`](../salones-wa/docs/OU
 
 ## Status — P0 (scaffold) ✅
 
-This repo currently implements **Phase 0** only: project scaffold, the SQLite
-schema, the prospect models, and the (operator-run) import of the validated
-prospect list. **No Baileys session, no web server, and no sender exist yet** —
-nothing can message anyone. `OUTREACH_ENABLED` defaults to `false`. 36 tests,
-all green (`npm test`).
+This repo implements **Phases 0–2**: project scaffold, the SQLite schema, the
+prospect models, the (operator-run) import of the validated prospect list, and
+the **receiver** (inbound reply handling — classification, status transitions,
+drop-from-queue, operator alert). **There is still NO Baileys session, no web
+server, and no sender** — nothing can message anyone, and the receiver's pure
+handler is not yet wired to a live socket (that's P1). `OUTREACH_ENABLED`
+defaults to `false`. 85 tests, all green (`npm test`).
 
-| Phase  | Deliverable                                                     | State               |
-| ------ | --------------------------------------------------------------- | ------------------- |
-| **P0** | Scaffold + DB schema + import validated prospects (dedupe jid)  | **done**            |
-| P1     | Baileys session + pairing link + `/health` + `/metrics`         | pending (needs SIM) |
-| P2     | Receiver: inbound capture, opt-out, interested flag, drop-queue | pending             |
-| P3     | Sender: cron + ramp + cap + jitter + window + kill switch       | pending             |
-| P4     | Status page + daily summary + mc-prometheus scrape/alert        | pending             |
-| P5     | End-to-end dry-run → warm SIM 3–5 days → ramp live              | pending             |
+| Phase  | Deliverable                                                     | State                                |
+| ------ | --------------------------------------------------------------- | ------------------------------------ |
+| **P0** | Scaffold + DB schema + import validated prospects (dedupe jid)  | **done**                             |
+| P1     | Baileys session + pairing link + `/health` + `/metrics`         | pending (needs SIM)                  |
+| **P2** | Receiver: inbound capture, opt-out, interested flag, drop-queue | **done** (logic; socket waits on P1) |
+| P3     | Sender: cron + ramp + cap + jitter + window + kill switch       | pending                              |
+| P4     | Status page + daily summary + mc-prometheus scrape/alert        | pending                              |
+| P5     | End-to-end dry-run → warm SIM 3–5 days → ramp live              | pending                              |
 
 ## Layout
 
@@ -34,17 +36,35 @@ src/
   db/
     schema.ts        SQLite DDL (prospects, messages, daily_sends)
     database.ts      getDb / initDb / resetDbSingleton singleton
-    models.ts        prospect upsert (jid-deduped), funnel counts, queries
+    models.ts        prospect upsert (jid-deduped), funnel, messages, status,
+                     inbound-reply bookkeeping, jid->prospect matching
   import/
-    prospects-import.ts  pure parse (header detect, filter, dedupe) + load
+    prospects-import.ts  pure parse (header detect, filter, dedupe, blocklist) + load
+  bot/
+    classify.ts      pure opt-out / interested regex heuristics (no LLM)
+    receiver.ts      handleInboundMessage: socket-free reply handler (P2)
   util/
-    phone.ts         MX number normalization + jid helpers
+    phone.ts         MX number normalization + jid helpers (tail10)
   index.ts           P0 bootstrap: open DB, print funnel, exit
 scripts/
   import-prospects.ts  CLI: fetch sheet (googleapis) -> parse -> load
-tests/                 phone, prospects-import, models + schema integrity
+tests/                 phone, prospects-import, models, classify, receiver
 gilda-outreach.service systemd unit (NOT installed until P1)
 ```
+
+## Receiver (P2) — how inbound replies are handled
+
+`handleInboundMessage(db, { jid, body, waMsgId? }, { onAlert? })` is a **pure,
+socket-free** handler. The P1 Baileys `messages.upsert` listener will call it per
+inbound message; until then it is exercised entirely by unit tests. Contract:
+
+- Only individual-user JIDs (`@s.whatsapp.net`) are handled — groups/broadcasts
+  are ignored (a group's last 10 digits could otherwise tail-match a prospect).
+- Unknown number → ignored, no writes. Known prospect → inbound logged,
+  `reply_count++`, `first_reply_at` stamped once.
+- **Any** reply drops the prospect from the send queue. Opt-out phrasing →
+  `opted_out` (permanent). Interested signal → `interested` + **one** operator
+  alert (delivered off-number by P1/P4; never an auto-pitch). Else → `replied`.
 
 ## Data model (SQLite, `data/outreach.db`)
 
