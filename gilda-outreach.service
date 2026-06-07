@@ -1,0 +1,31 @@
+# gilda-outreach systemd unit — NOT installed at P0.
+#
+# Install at P1 (once Baileys + the SIM make this a real long-running daemon).
+# Mirrors salones-wa.service. Until then `src/index.ts` exits immediately, which
+# Restart=always would treat as a crash loop, so do not enable it yet.
+#
+# Install:
+#   sudo cp gilda-outreach.service /etc/systemd/system/
+#   sudo useradd -r -s /usr/sbin/nologin gilda-outreach   # if not present
+#   sudo systemctl daemon-reload && sudo systemctl enable --now gilda-outreach
+
+[Unit]
+Description=Gilda Outreach — cold-outreach sender (pilot)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/claude/projects/gilda-outreach
+EnvironmentFile=/root/claude/projects/gilda-outreach/.env
+ExecStart=/root/claude/projects/gilda-outreach/node_modules/.bin/tsx src/index.ts
+Restart=always
+RestartSec=5
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gilda-outreach
+User=gilda-outreach
+Group=gilda-outreach
+
+[Install]
+WantedBy=multi-user.target

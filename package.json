@@ -1,0 +1,25 @@
+{
+  "name": "gilda-outreach",
+  "version": "0.1.0",
+  "description": "Gilda cold-outreach sender — ban-safe WhatsApp pilot from a dedicated number. Isolated from the salones-wa product bot.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "import-prospects": "tsx scripts/import-prospects.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "googleapis": "^173.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.23",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  }
+}

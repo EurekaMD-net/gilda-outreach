@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.claude/
+data/outreach.db
+data/outreach.db-shm
+data/outreach.db-wal
+data/sessions/
+.env
+*.log
