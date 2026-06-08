@@ -10,7 +10,7 @@ product bot. Full design: [`docs/OUTREACH-SENDER-SPEC.md`](../salones-wa/docs/OU
 > booking bot's event loop, session map, or restart lifecycle. Different number =
 > different Baileys session = no dual-socket conflict.
 
-## Status — P0 (scaffold) ✅
+## Status — P0–P2 done ✅ · P1 next (needs SIM → [`docs/P1-KICKOFF.md`](docs/P1-KICKOFF.md))
 
 This repo implements **Phases 0–2**: project scaffold, the SQLite schema, the
 prospect models, the (operator-run) import of the validated prospect list, and
@@ -20,14 +20,14 @@ server, and no sender** — nothing can message anyone, and the receiver's pure
 handler is not yet wired to a live socket (that's P1). `OUTREACH_ENABLED`
 defaults to `false`. 85 tests, all green (`npm test`).
 
-| Phase  | Deliverable                                                     | State                                |
-| ------ | --------------------------------------------------------------- | ------------------------------------ |
-| **P0** | Scaffold + DB schema + import validated prospects (dedupe jid)  | **done**                             |
-| P1     | Baileys session + pairing link + `/health` + `/metrics`         | pending (needs SIM)                  |
-| **P2** | Receiver: inbound capture, opt-out, interested flag, drop-queue | **done** (logic; socket waits on P1) |
-| P3     | Sender: cron + ramp + cap + jitter + window + kill switch       | pending                              |
-| P4     | Status page + daily summary + mc-prometheus scrape/alert        | pending                              |
-| P5     | End-to-end dry-run → warm SIM 3–5 days → ramp live              | pending                              |
+| Phase  | Deliverable                                                     | State                                                             |
+| ------ | --------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **P0** | Scaffold + DB schema + import validated prospects (dedupe jid)  | **done**                                                          |
+| P1     | Baileys session + pairing link + `/health` + `/metrics`         | **next** — [`docs/P1-KICKOFF.md`](docs/P1-KICKOFF.md) (needs SIM) |
+| **P2** | Receiver: inbound capture, opt-out, interested flag, drop-queue | **done** (logic; socket waits on P1)                              |
+| P3     | Sender: cron + ramp + cap + jitter + window + kill switch       | pending                                                           |
+| P4     | Status page + daily summary + mc-prometheus scrape/alert        | pending                                                           |
+| P5     | End-to-end dry-run → warm SIM 3–5 days → ramp live              | pending                                                           |
 
 ## Layout
 
