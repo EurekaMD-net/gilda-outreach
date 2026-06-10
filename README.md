@@ -10,24 +10,62 @@ product bot. Full design: [`docs/OUTREACH-SENDER-SPEC.md`](../salones-wa/docs/OU
 > booking bot's event loop, session map, or restart lifecycle. Different number =
 > different Baileys session = no dual-socket conflict.
 
-## Status — P0–P2 done ✅ · P1 next (needs SIM → [`docs/P1-KICKOFF.md`](docs/P1-KICKOFF.md))
+## Status — P0–P2 done ✅ · P1 **built** (code shipped) — awaiting SIM link → [`docs/P1-KICKOFF.md`](docs/P1-KICKOFF.md)
 
-This repo implements **Phases 0–2**: project scaffold, the SQLite schema, the
-prospect models, the (operator-run) import of the validated prospect list, and
-the **receiver** (inbound reply handling — classification, status transitions,
-drop-from-queue, operator alert). **There is still NO Baileys session, no web
-server, and no sender** — nothing can message anyone, and the receiver's pure
-handler is not yet wired to a live socket (that's P1). `OUTREACH_ENABLED`
-defaults to `false`. 85 tests, all green (`npm test`).
+This repo now implements **Phases 0–2 plus the P1 runtime**: scaffold, SQLite
+schema, prospect models, the (operator-run) import, the **receiver** (inbound
+reply handling), and — new in P1 — a **live single-session Baileys socket**
+(pairing-code link), the **web/observability surface** (`/health` + token-gated
+`/metrics`), and a **ban-averse liveness watchdog**. **There is still NO sender**
+— nothing messages anyone; P1 only links the number and handles inbound. The
+remaining P1 work is operator-physical: scan the pairing code on the SIM, install
+the systemd unit, run the live import. `OUTREACH_ENABLED` defaults to `false`
+(and has no effect — no send path exists). 130 tests, all green (`npm test`).
 
-| Phase  | Deliverable                                                     | State                                                             |
-| ------ | --------------------------------------------------------------- | ----------------------------------------------------------------- |
-| **P0** | Scaffold + DB schema + import validated prospects (dedupe jid)  | **done**                                                          |
-| P1     | Baileys session + pairing link + `/health` + `/metrics`         | **next** — [`docs/P1-KICKOFF.md`](docs/P1-KICKOFF.md) (needs SIM) |
-| **P2** | Receiver: inbound capture, opt-out, interested flag, drop-queue | **done** (logic; socket waits on P1)                              |
-| P3     | Sender: cron + ramp + cap + jitter + window + kill switch       | pending                                                           |
-| P4     | Status page + daily summary + mc-prometheus scrape/alert        | pending                                                           |
-| P5     | End-to-end dry-run → warm SIM 3–5 days → ramp live              | pending                                                           |
+| Phase  | Deliverable                                                     | State                                                               |
+| ------ | --------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **P0** | Scaffold + DB schema + import validated prospects (dedupe jid)  | **done**                                                            |
+| **P1** | Baileys session + pairing link + `/health` + `/metrics`         | **code shipped** — operator links SIM + installs daemon (runbook ↓) |
+| **P2** | Receiver: inbound capture, opt-out, interested flag, drop-queue | **done** (now wired to the live socket)                             |
+| P3     | Sender: cron + ramp + cap + jitter + window + kill switch       | pending                                                             |
+| P4     | Status page + daily summary + mc-prometheus scrape/alert        | pending                                                             |
+| P5     | End-to-end dry-run → warm SIM 3–5 days → ramp live              | pending                                                             |
+
+### P1 runtime — what's new
+
+- **`src/bot/baileys-manager.ts`** — single outreach session. Pairing-code link,
+  generation fence, **inverted** recovery: a transient drop reconnects, but a WA
+  `logout`/401 is a **probable ban → latch HALTED + alert, never auto-reconnect**.
+  The `messages.upsert` handler feeds the receiver and **never auto-replies** to a
+  cold lead.
+- **`src/bot/session-state.ts`** — single-session conn-state registry + pure
+  health + the inverted watchdog planner (recovers a stuck _transient_ socket;
+  never touches a `logged_out`/halted one; gives up + halts after the strike cap).
+- **`src/alert/channel.ts`** — operator alerts (interested-lead + session-halted).
+  Always logs to journald; **also** pushes to Telegram if `OUTREACH_ALERT_TELEGRAM_*`
+  are set in `.env` (open decision #3 — a pure env flip, no code change).
+- **`src/web/{auth,observability}.ts`** — public `GET /health` (no PII) + token-gated
+  `GET /metrics` + `GET /health/session`, bound to **127.0.0.1:8087**.
+
+### P1 — link + run (operator)
+
+```bash
+cd /root/claude/projects/gilda-outreach
+# 1. .env: set OUTREACH_NUMBER (the SIM's full intl number, digits only),
+#    ADMIN_TOKEN (≥16 random chars), OUTREACH_BLOCKLIST (personal line).
+#    Keep OUTREACH_ENABLED=false. (See env.example.)
+# 2. Install + start the daemon:
+sudo cp gilda-outreach.service /etc/systemd/system/
+sudo useradd -r -s /usr/sbin/nologin gilda-outreach   # if absent
+sudo systemctl daemon-reload && sudo systemctl enable --now gilda-outreach
+# 3. Read the pairing code from the log and enter it on the SIM's phone:
+journalctl -u gilda-outreach -f      # → "⇣ PAIRING CODE: XXXX-XXXX"
+#    WhatsApp → Dispositivos vinculados → Vincular con número de teléfono.
+# 4. Confirm linked + healthy:
+curl -s localhost:8087/health                                 # {"ok":true,"up":true,...}
+curl -s "localhost:8087/metrics?token=$ADMIN_TOKEN" | grep session_up
+# 5. Import the validated prospects (read-only vs the sheet; see below).
+```
 
 ## Layout
 
@@ -43,13 +81,24 @@ src/
   bot/
     classify.ts      pure opt-out / interested regex heuristics (no LLM)
     receiver.ts      handleInboundMessage: socket-free reply handler (P2)
+    baileys-manager.ts  single outreach session: pairing link, gen fence,
+                     inverted close-handler, messages.upsert -> receiver (P1)
+    session-state.ts conn-state registry + health + inverted watchdog plan (P1)
+  alert/
+    channel.ts       operator alerts: journald always + env-gated Telegram (P1)
+  web/
+    auth.ts          ADMIN_TOKEN: timing-safe compare + per-IP rate limiter (P1)
+    observability.ts public /health + token-gated /metrics + /health/session (P1)
   util/
     phone.ts         MX number normalization + jid helpers (tail10)
-  index.ts           P0 bootstrap: open DB, print funnel, exit
+    time.ts          mxDayKey: MX-local 'YYYY-MM-DD' (daily_sends key) (P1)
+  index.ts           P1 daemon: DB + web surface + session + watchdog + SIGTERM
 scripts/
   import-prospects.ts  CLI: fetch sheet (googleapis) -> parse -> load
-tests/                 phone, prospects-import, models, classify, receiver
-gilda-outreach.service systemd unit (NOT installed until P1)
+tests/                 phone, prospects-import, models, classify, receiver,
+                       session-state, baileys-helpers, baileys-manager-guard,
+                       alert-channel, observability, time  (130 tests)
+gilda-outreach.service systemd unit (install at P1 — see runbook above)
 ```
 
 ## Receiver (P2) — how inbound replies are handled

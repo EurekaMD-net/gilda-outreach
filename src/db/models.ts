@@ -219,3 +219,46 @@ export function getMessagesForProspect(
     )
     .all(prospectId) as Message[];
 }
+
+// ─── Metric helpers (P1 /metrics) ───────────────────────────────────────────
+
+/** Count of outbound messages logged (≈ total sends, incl. retries). */
+export function getOutboundMessageCount(db: Database.Database): number {
+  return (
+    db
+      .prepare("SELECT COUNT(*) AS n FROM messages WHERE direction = 'out'")
+      .get() as {
+      n: number;
+    }
+  ).n;
+}
+
+/** Count of inbound messages logged (total replies received). */
+export function getInboundMessageCount(db: Database.Database): number {
+  return (
+    db
+      .prepare("SELECT COUNT(*) AS n FROM messages WHERE direction = 'in'")
+      .get() as {
+      n: number;
+    }
+  ).n;
+}
+
+/** Count of prospects contacted at least once (`contacted_at` stamped). */
+export function getContactedCount(db: Database.Database): number {
+  return (
+    db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM prospects WHERE contacted_at IS NOT NULL",
+      )
+      .get() as { n: number }
+  ).n;
+}
+
+/** Sends recorded for a given MX day key ('YYYY-MM-DD'); 0 if none. */
+export function getDailySent(db: Database.Database, day: string): number {
+  const row = db
+    .prepare("SELECT sent_count FROM daily_sends WHERE day = ?")
+    .get(day) as { sent_count: number } | undefined;
+  return row?.sent_count ?? 0;
+}

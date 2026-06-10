@@ -1,13 +1,23 @@
-# P1 — Kickoff (START HERE next session)
+# P1 — Build complete ✅ · operator link pending
 
-> **Gate: P1 needs a physical SIM in a phone to link the Baileys session.** Do
-> not start until the operator has the dedicated outreach SIM ready to scan a
-> pairing code. Everything below is buildable once that's in hand.
+> **BUILD SHIPPED 2026-06-10.** The P1 runtime (live single-session Baileys
+> socket + pairing-code link, `/health` + token-gated `/metrics`, inverted
+> ban-averse watchdog, receiver wired to the socket) is built, tested (130 green,
+> typecheck clean), smoke-tested, and qa-audited (C1/W1/W2 closed, PASS).
+> **What remains is operator-physical, gated on the SIM:** set `.env`, install +
+> start the systemd daemon, scan the pairing code on the SIM, run the live import.
+> Steps 1–4 below are DONE in code; steps 5–6 are the operator runbook (also in
+> the README "P1 — link + run" section). `OUTREACH_ENABLED` stays `false`.
 
-**Repo state at P1 entry:** `EurekaMD-net/gilda-outreach`, `origin/main` `5ecd4e8`,
-85 tests green, `OUTREACH_ENABLED=false`. P0 (scaffold + schema + import) and P2
-(receiver logic) are **done and tested**; P1 only adds the live socket + web
-surface and wires the already-built, already-tested receiver to it.
+**Repo state:** `EurekaMD-net/gilda-outreach`. P0 (scaffold + schema + import),
+P2 (receiver logic), and the **P1 runtime** are done and tested. There is still
+NO sender (P3). The receiver is now wired to the live socket.
+
+**Done in code (steps 1–4):** integration seam wired (`messages.upsert` →
+`handleInboundMessage`, no auto-reply); single-session manager + auth +
+observability ported (port 8087); watchdog INVERSION (`logout`/401 → HALT +
+alert, never auto-reconnect); the six `/metrics` gauges (+ `session_up`,
+`session_halted`, funnel breakdown).
 
 **Full design:** `OUTREACH-SENDER-SPEC.md` — lives in the **salones-wa** repo at
 `docs/OUTREACH-SENDER-SPEC.md` (commit `8527798`). §4 = receiver contract, §6 =
