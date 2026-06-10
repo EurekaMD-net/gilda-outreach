@@ -220,6 +220,47 @@ export function getMessagesForProspect(
     .all(prospectId) as Message[];
 }
 
+// ─── Lead views (operator / Jarvis triage feed) ─────────────────────────────
+
+export interface LeadView {
+  id: string;
+  name: string | null;
+  colonia: string | null;
+  wa_jid: string;
+  status: ProspectStatus;
+  reply_count: number;
+  first_reply_at: number | null;
+  last_inbound_at: number | null;
+  last_inbound_body: string | null;
+}
+
+/**
+ * Warm leads — prospects in `interested` or `replied` — each with their most
+ * recent inbound message, most-recently-engaged first. This is the triage feed
+ * (who replied, what they said) the operator/Jarvis act on. It carries PII
+ * (name + number + message body), so its ONLY exposure is the token-gated,
+ * loopback-bound /leads endpoint — never the raw DB file (whose WAL sidecars
+ * can't be durably chmod-shared anyway).
+ */
+export function listLeads(db: Database.Database, limit = 100): LeadView[] {
+  return db
+    .prepare(
+      `SELECT p.id, p.name, p.colonia, p.wa_jid, p.status, p.reply_count,
+              p.first_reply_at,
+              (SELECT m.created_at FROM messages m
+                 WHERE m.prospect_id = p.id AND m.direction = 'in'
+                 ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1) AS last_inbound_at,
+              (SELECT m.body FROM messages m
+                 WHERE m.prospect_id = p.id AND m.direction = 'in'
+                 ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1) AS last_inbound_body
+         FROM prospects p
+        WHERE p.status IN ('interested', 'replied')
+        ORDER BY COALESCE(p.first_reply_at, p.imported_at) DESC, p.rowid DESC
+        LIMIT ?`,
+    )
+    .all(limit) as LeadView[];
+}
+
 // ─── Metric helpers (P1 /metrics) ───────────────────────────────────────────
 
 /** Count of outbound messages logged (≈ total sends, incl. retries). */

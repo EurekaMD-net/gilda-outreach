@@ -10,22 +10,22 @@ product bot. Full design: [`docs/OUTREACH-SENDER-SPEC.md`](../salones-wa/docs/OU
 > booking bot's event loop, session map, or restart lifecycle. Different number =
 > different Baileys session = no dual-socket conflict.
 
-## Status — P0–P2 ✅ · P1 **LIVE** (number linked) · P3 sender **built, shadow-ready** (`OUTREACH_MODE=off`)
+## Status — P0–P2 ✅ · P1 **LIVE** (number linked) · P3 sender **SHADOW** (`OUTREACH_MODE=shadow`, nothing sends)
 
 The number is linked and connected; **296 prospects imported** (`pending`). The
-P3 sender is built and boot-validated but **dormant** — `OUTREACH_MODE` defaults
-to `off`, and `live` additionally requires `OUTREACH_ENABLED=true`. Nothing
-sends until both are deliberately flipped after the number is warmed. 173 tests,
-all green (`npm test`).
+P3 sender is running in **shadow** — it logs would-sends (selection + pacing +
+ramp + window) but **never touches WhatsApp**. Going live additionally requires
+`OUTREACH_MODE=live` **and** `OUTREACH_ENABLED=true` (a second lock), flipped only
+after the shadow day is reviewed. 177 tests, all green (`npm test`).
 
-| Phase  | Deliverable                                                     | State                                                         |
-| ------ | --------------------------------------------------------------- | ------------------------------------------------------------- |
-| **P0** | Scaffold + DB schema + import validated prospects (dedupe jid)  | **done** (296 imported)                                       |
-| **P1** | Baileys session + pairing link + `/health` + `/metrics`         | **LIVE** — number linked + connected, daemon installed        |
-| **P2** | Receiver: inbound capture, opt-out, interested flag, drop-queue | **done** (wired to the live socket)                           |
-| **P3** | Sender: cron + ramp + cap + jitter + window + kill switch       | **built — shadow-ready**; live gated on warm-up + double lock |
-| P4     | Status page + daily summary + mc-prometheus scrape/alert        | pending                                                       |
-| P5     | End-to-end shadow → warm SIM 3–5 days → ramp live               | pending                                                       |
+| Phase  | Deliverable                                                     | State                                                             |
+| ------ | --------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **P0** | Scaffold + DB schema + import validated prospects (dedupe jid)  | **done** (296 imported)                                           |
+| **P1** | Baileys session + pairing link + `/health` + `/metrics`         | **LIVE** — number linked + connected, daemon installed            |
+| **P2** | Receiver: inbound capture, opt-out, interested flag, drop-queue | **done** (wired to the live socket)                               |
+| **P3** | Sender: cron + ramp + cap + jitter + window + kill switch       | **SHADOW** (logs would-sends); live gated on review + double lock |
+| P4     | Status page + daily summary + mc-prometheus scrape/alert        | pending                                                           |
+| P5     | End-to-end shadow → warm SIM 3–5 days → ramp live               | pending                                                           |
 
 ### Sender (P3) — how it's controlled
 
@@ -60,7 +60,11 @@ review a day of would-sends; (3) `OUTREACH_MODE=live` + `OUTREACH_ENABLED=true`.
   Always logs to journald; **also** pushes to Telegram if `OUTREACH_ALERT_TELEGRAM_*`
   are set in `.env` (open decision #3 — a pure env flip, no code change).
 - **`src/web/{auth,observability}.ts`** — public `GET /health` (no PII) + token-gated
-  `GET /metrics` + `GET /health/session`, bound to **127.0.0.1:8087**.
+  `GET /metrics`, `GET /health/session` (session + funnel + day), and `GET /leads`
+  (warm-lead triage feed, PII), bound to **127.0.0.1:8087**. `/leads` +
+  `/health/session` are the durable read path for the operator / Jarvis: a WAL DB's
+  `-wal`/`-shm` files are recreated at mode `600` each restart, so a `chmod` on the
+  file can't be shared durably — the loopback HTTP seam can.
 
 ### P1 — link + run (operator)
 

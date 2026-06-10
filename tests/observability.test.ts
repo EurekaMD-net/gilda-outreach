@@ -17,6 +17,7 @@ import {
 import {
   computeOutreachSnapshot,
   renderMetrics,
+  createObservabilityRoutes,
 } from "../src/web/observability.js";
 import { mxDayKey } from "../src/util/time.js";
 
@@ -110,5 +111,104 @@ describe("outreach observability", () => {
       // every metric line is `name value` or `name{labels} value`
       expect(line).toMatch(/^[a-z_]+(\{[^}]*\})? -?\d+$/);
     }
+  });
+});
+
+describe("outreach /leads + /health/session routes", () => {
+  // ≥16 chars (auth.ts requires it); fake — never the real ADMIN_TOKEN.
+  const TOKEN = "test-admin-token-0123456789";
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = initDb(":memory:");
+    resetSessionState();
+    process.env.ADMIN_TOKEN = TOKEN;
+  });
+  afterEach(() => {
+    resetDbSingleton();
+    resetSessionState();
+    delete process.env.ADMIN_TOKEN;
+  });
+
+  function seedLead(
+    wa_jid: string,
+    name: string,
+    status: ProspectStatus,
+    inbound?: string,
+  ): string {
+    upsertProspect(db, {
+      id: randomUUID(),
+      name,
+      colonia: "SAN PABLO",
+      phone_raw: "5512345678",
+      wa_jid,
+      source: "test",
+    });
+    const p = getProspectByJid(db, wa_jid)!;
+    setProspectStatus(db, p.id, status);
+    if (inbound) {
+      db.prepare(
+        "UPDATE prospects SET reply_count = 1, first_reply_at = unixepoch() WHERE id = ?",
+      ).run(p.id);
+      insertMessage(db, { prospect_id: p.id, direction: "in", body: inbound });
+    }
+    return p.id;
+  }
+
+  it("/leads requires the admin token", async () => {
+    const app = createObservabilityRoutes(db);
+    const res = await app.request("/leads");
+    expect(res.status).toBe(401);
+  });
+
+  it("/leads returns interested + replied with latest inbound + ISO times; never pending", async () => {
+    seedLead("i@s.whatsapp.net", "Salon Uno", "interested", "sí me interesa");
+    seedLead("r@s.whatsapp.net", "Salon Dos", "replied", "quién es?");
+    seedLead("p@s.whatsapp.net", "Salon Tres", "pending"); // must be excluded
+
+    const app = createObservabilityRoutes(db);
+    const res = await app.request(`/leads?token=${TOKEN}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      count: number;
+      leads: Array<Record<string, unknown>>;
+    };
+
+    expect(body.count).toBe(2);
+    expect(body.leads.map((l) => l.waJid).sort()).toEqual([
+      "i@s.whatsapp.net",
+      "r@s.whatsapp.net",
+    ]);
+    expect(body.leads.some((l) => l.status === "pending")).toBe(false);
+
+    const interested = body.leads.find((l) => l.status === "interested")!;
+    expect(interested.name).toBe("Salon Uno");
+    expect(interested.lastInboundBody).toBe("sí me interesa");
+    expect(String(interested.firstReplyAt)).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(String(interested.lastInboundAt)).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("/leads clamps ?limit", async () => {
+    seedLead("a@s.whatsapp.net", "A", "interested", "hola");
+    seedLead("b@s.whatsapp.net", "B", "interested", "hey");
+    const app = createObservabilityRoutes(db);
+    const res = await app.request(`/leads?token=${TOKEN}&limit=1`);
+    const body = (await res.json()) as { count: number };
+    expect(body.count).toBe(1);
+  });
+
+  it("/health/session is token-gated and carries the MX day + dailySent", async () => {
+    db.prepare("INSERT INTO daily_sends (day, sent_count) VALUES (?, 3)").run(
+      mxDayKey(),
+    );
+    const app = createObservabilityRoutes(db);
+
+    expect((await app.request("/health/session")).status).toBe(401);
+
+    const res = await app.request(`/health/session?token=${TOKEN}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { day: string; dailySent: number };
+    expect(body.day).toBe(mxDayKey());
+    expect(body.dailySent).toBe(3);
   });
 });

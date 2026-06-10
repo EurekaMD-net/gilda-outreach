@@ -2,8 +2,9 @@
  * Operational observability surface for mc-prometheus / uptime tooling.
  *
  *   GET /health          → public liveness probe (no token, no PII)
- *   GET /health/session  → JSON, full outreach session health (ADMIN_TOKEN)
+ *   GET /health/session  → JSON, full session health + funnel + day (ADMIN_TOKEN)
  *   GET /metrics         → Prometheus text exposition (ADMIN_TOKEN)
+ *   GET /leads           → JSON, warm-lead triage feed; PII (ADMIN_TOKEN)
  *
  * /metrics + /health/session are gated by ADMIN_TOKEN (?token=) because the
  * panel is fronted publicly by Caddy. mc-prometheus scrapes 127.0.0.1:8087 and
@@ -31,6 +32,7 @@ import {
   getFunnelCounts,
   getInboundMessageCount,
   getOutboundMessageCount,
+  listLeads,
   type FunnelCounts,
 } from "../db/models.js";
 import { mxDayKey } from "../util/time.js";
@@ -49,6 +51,18 @@ const FUNNEL_STATUSES: ReadonlyArray<keyof Omit<FunnelCounts, "total">> = [
   "invalid",
   "converted",
 ] as const;
+
+/** unixepoch() seconds → ISO 8601 (UTC), or null. */
+function epochToIso(sec: number | null): string | null {
+  return sec != null ? new Date(sec * 1000).toISOString() : null;
+}
+
+/** Parse a `?limit=` query into a sane bound for the /leads feed. */
+function clampLimit(raw: string | undefined, def = 100, max = 500): number {
+  const n = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(n) || n <= 0) return def;
+  return Math.min(n, max);
+}
 
 export interface OutreachSnapshot {
   health: SessionHealth;
@@ -197,6 +211,8 @@ export function createObservabilityRoutes(db: Database.Database): Hono {
       ok: true,
       ts: new Date().toISOString(),
       thresholdHours: disconnectAlertHours(),
+      day: mxDayKey(),
+      dailySent: s.dailySent,
       session: {
         state: s.health.state,
         up: s.health.up,
@@ -224,6 +240,36 @@ export function createObservabilityRoutes(db: Database.Database): Hono {
 
     return c.body(renderMetrics(computeOutreachSnapshot(db)), 200, {
       "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+    });
+  });
+
+  // ─── Warm-lead triage feed (token-gated JSON; carries PII) ──────────────
+  // The durable replacement for direct DB-file reads: a WAL SQLite file's
+  // -wal/-shm sidecars are recreated at mode 600 on every restart, so a chmod
+  // grant on the DB can't persist. This loopback, token-gated seam hands the
+  // operator / Jarvis the same lead detail without ever widening the file's
+  // permissions. `?limit=` clamps to [1,500] (default 100).
+  app.get("/leads", (c) => {
+    const denied = gate(c);
+    if (denied) return denied;
+
+    const limit = clampLimit(c.req.query("limit"));
+    const leads = listLeads(db, limit).map((l) => ({
+      id: l.id,
+      name: l.name,
+      colonia: l.colonia,
+      waJid: l.wa_jid,
+      status: l.status,
+      replyCount: l.reply_count,
+      firstReplyAt: epochToIso(l.first_reply_at),
+      lastInboundAt: epochToIso(l.last_inbound_at),
+      lastInboundBody: l.last_inbound_body,
+    }));
+    return c.json({
+      ok: true,
+      ts: new Date().toISOString(),
+      count: leads.length,
+      leads,
     });
   });
 
