@@ -49,6 +49,28 @@ export function classifyDisconnect(
   return statusCode === WA_LOGGED_OUT ? "halt" : "reconnect";
 }
 
+export type CloseAction = "ban-halt" | "retry";
+
+/**
+ * Decide what a socket `close` means, given whether the session was already
+ * linked. A WA logout/401 is a probable BAN → halt — but ONLY for an
+ * already-REGISTERED session. The identical code on an UNREGISTERED (still
+ * pairing) session just means "not linked yet": the pairing window ended before
+ * the operator entered a code, so we must keep cycling to offer fresh codes, NOT
+ * latch the ban-halt. (Onboarding rule — same spirit as the watchdog's qa-W4
+ * skip-unregistered gate; the original P1 close-handler applied the inversion
+ * unconditionally and false-halted during the very first link attempt.)
+ * Every non-401 code is a transient drop → retry.
+ */
+export function decideClose(
+  statusCode: number | undefined,
+  registered: boolean,
+): CloseAction {
+  return classifyDisconnect(statusCode) === "halt" && registered
+    ? "ban-halt"
+    : "retry";
+}
+
 /** Structural shape of a Baileys text message (avoids a runtime baileys dep). */
 interface InboundTextSource {
   conversation?: string | null;
@@ -267,8 +289,9 @@ async function buildOutreachSocket(
       const reason = lastDisconnect?.error?.message ?? "unknown";
       currentSession = null;
 
-      if (classifyDisconnect(statusCode) === "halt") {
-        // THE INVERSION: probable ban → latch + shout, never auto-reconnect.
+      if (decideClose(statusCode, state.creds.registered) === "ban-halt") {
+        // THE INVERSION: a logout/401 on an ALREADY-LINKED session → probable
+        // ban → latch + shout, never auto-reconnect.
         const haltReason = `WA logout/401 (code=${statusCode ?? "?"}, ${reason}) — probable ban`;
         markHalted(haltReason);
         console.error(
@@ -277,8 +300,16 @@ async function buildOutreachSocket(
         options.onHalt?.(haltReason);
       } else {
         recordSessionState("reconnecting");
+        // A 401 while still UNREGISTERED = "pairing window ended, not linked
+        // yet". Back off longer (20s vs 5s) so we open fresh pairing windows
+        // without hammering WA's backend if it is rate-limiting the attempts.
+        const onboarding401 =
+          classifyDisconnect(statusCode) === "halt" && !state.creds.registered;
+        const delayMs = onboarding401 ? 20_000 : 5_000;
         console.log(
-          `[outreach] transient drop (code=${statusCode ?? "?"}, ${reason}) — reconnecting in 5s...`,
+          onboarding401
+            ? `[outreach] not linked yet (code=${statusCode ?? "?"}, ${reason}) — new pairing window in ${delayMs / 1000}s...`
+            : `[outreach] transient drop (code=${statusCode ?? "?"}, ${reason}) — reconnecting in ${delayMs / 1000}s...`,
         );
         // qa-C1: fence the timer to THIS generation. If a newer socket (e.g. a
         // watchdog reinit) has superseded us before the timer fires, it owns
@@ -289,7 +320,7 @@ async function buildOutreachSocket(
           void initOutreachSession(options).catch((err) =>
             console.error("[outreach] reconnect failed:", err),
           );
-        }, 5000);
+        }, delayMs);
       }
     }
 
