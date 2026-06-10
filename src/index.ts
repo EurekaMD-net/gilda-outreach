@@ -2,10 +2,8 @@
  * gilda-outreach — service entry point (P1: long-running daemon).
  *
  * Opens the DB, serves the observability surface (127.0.0.1:8087), links the
- * dedicated outreach number via Baileys (pairing code), and wires inbound
- * replies to the receiver. There is STILL no sender — P1 only adds the live
- * socket + web surface + the ban-averse liveness watchdog. OUTREACH_ENABLED has
- * no effect yet (no send path exists); a 'true' value just warns at startup.
+ * dedicated outreach number via Baileys (pairing code), wires inbound replies to
+ * the receiver, and (P3) runs the sender per OUTREACH_MODE (off|shadow|live).
  *
  * Recovery is INVERTED vs the salones product bot: a WA logout/401 is a probable
  * ban → latch HALTED + alert, never auto-reconnect. Only transient drops retry.
@@ -23,6 +21,7 @@ import {
   initOutreachSession,
   reinitOutreachSession,
   isSessionRegistered,
+  getSession,
   type OutreachSessionOptions,
 } from "./bot/baileys-manager.js";
 import {
@@ -34,6 +33,7 @@ import {
   getBootTime,
   type WatchdogMemory,
 } from "./bot/session-state.js";
+import { loadMode, startSender, type OutreachMode } from "./sender/sender.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "8087");
 const DB_PATH = process.env["DB_PATH"] ?? "./data/outreach.db";
@@ -133,11 +133,15 @@ async function main(): Promise<void> {
       "[gilda-outreach] no prospects yet — run: npm run import-prospects.",
     );
   }
-  if (process.env["OUTREACH_ENABLED"] === "true") {
+  // ── Sender mode (off | shadow | live) ────────────────────────────────────
+  // `live` ADDITIONALLY requires OUTREACH_ENABLED=true — a second, independent
+  // lock, so flipping a single flag can never message real prospects.
+  let mode: OutreachMode = loadMode();
+  if (mode === "live" && process.env["OUTREACH_ENABLED"] !== "true") {
     console.warn(
-      "[gilda-outreach] WARNING: OUTREACH_ENABLED=true but no sender exists yet " +
-        "(P3). No messages will be sent.",
+      "[gilda-outreach] OUTREACH_MODE=live but OUTREACH_ENABLED!=true → staying in SHADOW (second lock).",
     );
+    mode = "shadow";
   }
 
   console.log("[gilda-outreach] ready ✅");
@@ -191,10 +195,27 @@ async function main(): Promise<void> {
     );
   }
 
+  // ── Sender (P3) ──────────────────────────────────────────────────────────
+  let senderTimer: NodeJS.Timeout | undefined;
+  if (mode === "off") {
+    console.log(
+      "[gilda-outreach] sender mode=off — no outbound (receiver only).",
+    );
+  } else {
+    senderTimer = startSender(db, getSession, { mode });
+    console.log(
+      `[gilda-outreach] sender mode=${mode} — ` +
+        (mode === "shadow"
+          ? "SHADOW (logs would-sends; nothing leaves)."
+          : "LIVE (sending within window + ramp + caps)."),
+    );
+  }
+
   // ── Graceful shutdown ────────────────────────────────────────────────────
   process.on("SIGTERM", () => {
     console.log("[gilda-outreach] shutting down...");
     if (watchdog) clearInterval(watchdog);
+    if (senderTimer) clearInterval(senderTimer);
     db.close();
     process.exit(0);
   });

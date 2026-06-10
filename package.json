@@ -9,7 +9,8 @@
     "build": "tsc",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "import-prospects": "tsx scripts/import-prospects.ts"
+    "import-prospects": "tsx scripts/import-prospects.ts",
+    "shadow-plan": "tsx scripts/shadow-plan.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",

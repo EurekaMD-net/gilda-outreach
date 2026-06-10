@@ -10,26 +10,41 @@ product bot. Full design: [`docs/OUTREACH-SENDER-SPEC.md`](../salones-wa/docs/OU
 > booking bot's event loop, session map, or restart lifecycle. Different number =
 > different Baileys session = no dual-socket conflict.
 
-## Status — P0–P2 done ✅ · P1 **built** (code shipped) — awaiting SIM link → [`docs/P1-KICKOFF.md`](docs/P1-KICKOFF.md)
+## Status — P0–P2 ✅ · P1 **LIVE** (number linked) · P3 sender **built, shadow-ready** (`OUTREACH_MODE=off`)
 
-This repo now implements **Phases 0–2 plus the P1 runtime**: scaffold, SQLite
-schema, prospect models, the (operator-run) import, the **receiver** (inbound
-reply handling), and — new in P1 — a **live single-session Baileys socket**
-(pairing-code link), the **web/observability surface** (`/health` + token-gated
-`/metrics`), and a **ban-averse liveness watchdog**. **There is still NO sender**
-— nothing messages anyone; P1 only links the number and handles inbound. The
-remaining P1 work is operator-physical: scan the pairing code on the SIM, install
-the systemd unit, run the live import. `OUTREACH_ENABLED` defaults to `false`
-(and has no effect — no send path exists). 130 tests, all green (`npm test`).
+The number is linked and connected; **296 prospects imported** (`pending`). The
+P3 sender is built and boot-validated but **dormant** — `OUTREACH_MODE` defaults
+to `off`, and `live` additionally requires `OUTREACH_ENABLED=true`. Nothing
+sends until both are deliberately flipped after the number is warmed. 173 tests,
+all green (`npm test`).
 
-| Phase  | Deliverable                                                     | State                                                               |
-| ------ | --------------------------------------------------------------- | ------------------------------------------------------------------- |
-| **P0** | Scaffold + DB schema + import validated prospects (dedupe jid)  | **done**                                                            |
-| **P1** | Baileys session + pairing link + `/health` + `/metrics`         | **code shipped** — operator links SIM + installs daemon (runbook ↓) |
-| **P2** | Receiver: inbound capture, opt-out, interested flag, drop-queue | **done** (now wired to the live socket)                             |
-| P3     | Sender: cron + ramp + cap + jitter + window + kill switch       | pending                                                             |
-| P4     | Status page + daily summary + mc-prometheus scrape/alert        | pending                                                             |
-| P5     | End-to-end dry-run → warm SIM 3–5 days → ramp live              | pending                                                             |
+| Phase  | Deliverable                                                     | State                                                         |
+| ------ | --------------------------------------------------------------- | ------------------------------------------------------------- |
+| **P0** | Scaffold + DB schema + import validated prospects (dedupe jid)  | **done** (296 imported)                                       |
+| **P1** | Baileys session + pairing link + `/health` + `/metrics`         | **LIVE** — number linked + connected, daemon installed        |
+| **P2** | Receiver: inbound capture, opt-out, interested flag, drop-queue | **done** (wired to the live socket)                           |
+| **P3** | Sender: cron + ramp + cap + jitter + window + kill switch       | **built — shadow-ready**; live gated on warm-up + double lock |
+| P4     | Status page + daily summary + mc-prometheus scrape/alert        | pending                                                       |
+| P5     | End-to-end shadow → warm SIM 3–5 days → ramp live               | pending                                                       |
+
+### Sender (P3) — how it's controlled
+
+`OUTREACH_MODE` = `off` (default, no sender) · `shadow` (logs would-sends, never
+sends) · `live` (sends — **and** requires `OUTREACH_ENABLED=true`, a second lock).
+Every send is gated by: the mode, the **send window** (Mon–Fri 10–18 MX), the
+**daily ramp cap** (`5,8,12,15,20,25,30,35,40`, advances per active send-day), a
+**jittered min-gap** (never bursty), the session **not being halted** (probable
+ban), and a **send-time blocklist re-check**. Sends are **at-most-once**: an
+uncertain send (error/timeout) marks the prospect `failed` and is never retried.
+
+Preview today's batch without sending (read-only, window-independent):
+
+```bash
+npm run shadow-plan        # cap, recipients, rendered message, projection
+```
+
+To run for real, in order: (1) warm the number; (2) `OUTREACH_MODE=shadow` →
+review a day of would-sends; (3) `OUTREACH_MODE=live` + `OUTREACH_ENABLED=true`.
 
 ### P1 runtime — what's new
 

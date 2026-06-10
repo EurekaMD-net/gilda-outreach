@@ -262,3 +262,83 @@ export function getDailySent(db: Database.Database, day: string): number {
     .get(day) as { sent_count: number } | undefined;
   return row?.sent_count ?? 0;
 }
+
+// ─── Sender (P3) ────────────────────────────────────────────────────────────
+
+/**
+ * Count of PRIOR days that had at least one send (day < today). This is the
+ * ramp index: schedule day N = this count, so the ramp advances per active
+ * send-day, not per calendar day (a weekend gap doesn't skip a step).
+ */
+export function getPriorSendDayCount(
+  db: Database.Database,
+  todayKey: string,
+): number {
+  return (
+    db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM daily_sends WHERE sent_count > 0 AND day < ?",
+      )
+      .get(todayKey) as { n: number }
+  ).n;
+}
+
+/**
+ * Atomically record one outbound send: flip the prospect to `sent` (only if
+ * still `pending`/`queued` — never clobber a status the receiver changed in the
+ * meantime), stamp contacted_at (first only) + last_out_at, bump attempts, log
+ * the outbound message, and increment the day's send counter. Returns whether
+ * the prospect row was actually transitioned (false = it had already left the
+ * queue, e.g. replied between selection and send — caller should treat as a
+ * no-op the next tick won't repeat).
+ */
+export function recordOutboundSend(
+  db: Database.Database,
+  prospectId: string,
+  body: string,
+  waMsgId: string | null,
+  day: string,
+): boolean {
+  const tx = db.transaction(() => {
+    const res = db
+      .prepare(
+        `UPDATE prospects
+           SET status = 'sent',
+               contacted_at = COALESCE(contacted_at, unixepoch()),
+               last_out_at = unixepoch(),
+               attempts = attempts + 1
+         WHERE id = ? AND status IN ('pending', 'queued')`,
+      )
+      .run(prospectId);
+    if (res.changes === 0) return false; // already left the queue — no-op
+    db.prepare(
+      `INSERT INTO messages (id, prospect_id, direction, body, wa_msg_id)
+       VALUES (?, ?, 'out', ?, ?)`,
+    ).run(randomUUID(), prospectId, body, waMsgId);
+    db.prepare(
+      `INSERT INTO daily_sends (day, sent_count) VALUES (?, 1)
+       ON CONFLICT(day) DO UPDATE SET sent_count = sent_count + 1`,
+    ).run(day);
+    return true;
+  });
+  return tx() as boolean;
+}
+
+/**
+ * Mark a prospect's send as FAILED (uncertain outcome — error or timeout). Only
+ * transitions out of `pending`/`queued`, so it never clobbers a status the
+ * receiver set. At-most-once: a `failed` prospect is not re-selected, so we never
+ * risk double-messaging a number whose first send may already have landed. The
+ * operator can deliberately requeue `failed` rows later.
+ */
+export function markProspectFailed(
+  db: Database.Database,
+  prospectId: string,
+  error: string,
+): void {
+  db.prepare(
+    `UPDATE prospects
+       SET status = 'failed', last_error = ?, attempts = attempts + 1
+     WHERE id = ? AND status IN ('pending', 'queued')`,
+  ).run(error, prospectId);
+}
