@@ -11,14 +11,14 @@
  * the prospect permanently — locked by a test. Cold outreach is unsolicited, so
  * every message must carry a working opt-out and identify the sender.
  *
- * Text is the operator's verbatim copy (2026-06-10). NOTE: two accent points the
- * operator may want before going live — "tu colonia" (possessive, no accent) and
- * "mientras tú estás" (pronoun, accented). Left exactly as provided.
+ * Text is the operator's approved copy (2026-06-10), with two accent corrections
+ * applied before go-live: "tu colonia" (possessive determiner, no accent) and
+ * "mientras tú estás" (subject pronoun, accented).
  */
 export const OUTREACH_MESSAGE =
   "Hola 👋 Te escribo de Gilda.mx, soy Bibi, mucho gusto! Estamos ayudando a " +
-  "algunos salones en tú colonia a organizar mejor su agenda con un asistente " +
-  "que contesta y agenda citas por WhatsApp mientras tu estás atendiendo a tus " +
+  "algunos salones en tu colonia a organizar mejor su agenda con un asistente " +
+  "que contesta y agenda citas por WhatsApp mientras tú estás atendiendo a tus " +
   "clientas. ¿Te gustaría que te cuente rápido cómo funciona? Si prefieres que " +
   "no te escriba, responde BAJA. ¡Nos encantará ayudarte!";
 
