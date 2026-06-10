@@ -1,13 +1,12 @@
-# P1 — Build complete ✅ · operator link pending
+# P1 — Complete ✅ · number LINKED · (historical build doc)
 
-> **BUILD SHIPPED 2026-06-10.** The P1 runtime (live single-session Baileys
-> socket + pairing-code link, `/health` + token-gated `/metrics`, inverted
-> ban-averse watchdog, receiver wired to the socket) is built, tested (130 green,
-> typecheck clean), smoke-tested, and qa-audited (C1/W1/W2 closed, PASS).
-> **What remains is operator-physical, gated on the SIM:** set `.env`, install +
-> start the systemd daemon, scan the pairing code on the SIM, run the live import.
-> Steps 1–4 below are DONE in code; steps 5–6 are the operator runbook (also in
-> the README "P1 — link + run" section). `OUTREACH_ENABLED` stays `false`.
+> **DONE 2026-06-10.** P1 shipped, the number `+522205847098` is **linked +
+> connected**, 296 prospects imported, and P3 (sender) now runs in **shadow**.
+> This file is the original P1 build record — kept for history. For current
+> status see the **README** ("Status" + "Sender (P3)") and **`docs/LEARNINGS.md`**
+> (the non-obvious operational doctrine: ban-averse inversion, shadow→live
+> cadence, durable read-path, Jarvis monitor role). The steps below were the P1
+> runbook; the SIM is linked and the daemon installed.
 
 **Repo state:** `EurekaMD-net/gilda-outreach`. P0 (scaffold + schema + import),
 P2 (receiver logic), and the **P1 runtime** are done and tested. There is still
