@@ -1,7 +1,7 @@
 # gilda-outreach — operational doctrine & learnings
 
 Non-obvious decisions a future reader/agent needs. Status lives in the README;
-this file is the _why_. Last updated 2026-06-10 (`ebb312a`).
+this file is the _why_. Last updated 2026-06-14.
 
 ## 1. Ban-averse inversion — the core philosophy (spec §6)
 
@@ -89,3 +89,52 @@ sends from the outreach number.** Role directive:
 - A `systemctl restart` flaps the WA socket, but a **registered** session
   reconnects cleanly (515 → connected) — that is a transient drop, NOT a ban.
   Still: avoid needless restarts on a freshly-warmed number.
+
+## 6. Re-linking after a restriction / fingerprint sweep (2026-06-14)
+
+A linked-device `conflict`/`device_removed`/401 — plain logout **or** a temporary
+account restriction — is **recoverable, and the recovery variable is TIME, not
+infrastructure**. The outreach number +522205847098 was restricted 2026-06-11
+(5h timer + "cuenta restringida") _during a ZERO-send shadow run_ — detection was
+the connection fingerprint (Baileys + VPS IP), not content. ~3 days later it
+**re-linked on the FIRST attempt, same VPS IP, no proxy** (the temp restriction
+had simply lapsed). The product bot recovered identically.
+
+- **2 failures ≠ a permanent wall when the hidden variable is a cooldown.** Don't
+  declare an architectural block from a short retry burst; space attempts ~15–20
+  min (mirrors the global `transient-vs-permanent-failure` rule).
+- **Proxy/aged-number is a HEDGE against re-sweep, NOT a prerequisite to re-link.**
+  Linking from the VPS is proven for both numbers. The open risk after a re-link
+  is **STABILITY** (could be re-swept over hours/days), not recovery. Meta Cloud
+  API stays HARD-RULED-OUT (unit economics).
+- **Clean-slate re-link procedure (makes it one-shot):**
+  1. Move the dead session aside (`data/sessions/` → `data/sessions.dead-<date>`)
+     so Baileys can't resume invalidated creds (→ instant 401); pre-create an
+     empty `data/sessions` owned by the service user at `0700` so start can't trip
+     on perms.
+  2. `systemctl reset-failed` (the halt leaves the unit `failed`).
+  3. Set/confirm the double lock (`OUTREACH_MODE` off|shadow + `OUTREACH_ENABLED`
+     off) BEFORE start — the boot echo `sender mode=… (nothing leaves)` is the
+     verification that nothing can send during the fragile window.
+  4. `systemctl start` → on a fresh (unregistered) session Baileys auto-requests
+     the pairing code (`⇣ PAIRING CODE: <code>`, rotates ~50s). Pre-stage the
+     phone on the code-entry screen, fetch the **latest** code, enter in-window.
+  5. Verify `connected ✅ (<number>)` + `creds.json` written (post-pair 515 is
+     normal). Watch ~hours for a re-sweep (the 2026-06-11 sweep hit ~3h in); the
+     halt-gate + watchdog fail safe.
+- **Re-link ≠ go-live.** Recovery links in `shadow`/locked to prove the session
+  SURVIVES before any outbound; going live is a separate, later decision (see
+  `CAMPAIGN-GO-LIVE.md`).
+
+### Gate-1 send-logic audit (2026-06-14) — VERIFIED, banked
+
+Full code+data audit of the send path PASSED: `isHalted()` is the first send gate;
+at-most-once selects only `pending` (a real send advances status, `opted_out`
+excluded); daily cap (`rampCapForDay`) + send window + jittered gap are enforced,
+not just logged; blocklist is a **runtime** send-time `isForbiddenNumber` re-check
+vs `OUTREACH_BLOCKLIST` (env, captured at boot → restart to change it); the opt-out
+classifier deliberately handles the JS `\b`-ASCII-accent bug. Data: 296 `pending`,
+0 duplicate phones/jids, all 10-digit. **One known data flag, LEFT AS-IS by operator
+decision:** `NADIA NAILS` wa_jid `525613268054` is `52`-prefixed (missing the mobile
+`1`) vs the other 295 `521…` — self-limiting (bounces to `last_error`, no ban),
+1/296.
