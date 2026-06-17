@@ -1,7 +1,7 @@
 # gilda-outreach — operational doctrine & learnings
 
 Non-obvious decisions a future reader/agent needs. Status lives in the README;
-this file is the _why_. Last updated 2026-06-14.
+this file is the _why_. Last updated 2026-06-17.
 
 ## 1. Ban-averse inversion — the core philosophy (spec §6)
 
@@ -138,3 +138,31 @@ classifier deliberately handles the JS `\b`-ASCII-accent bug. Data: 296 `pending
 decision:** `NADIA NAILS` wa_jid `525613268054` is `52`-prefixed (missing the mobile
 `1`) vs the other 295 `521…` — self-limiting (bounces to `last_error`, no ban),
 1/296.
+
+## 7. Canary RESULT (2026-06-17) — one cold send → PERMANENT ban. Pilot paused.
+
+The same-IP 5-send canary ran. **Gate-0 passed** (number held the session 3.5 days,
+17/17 clean reconnects, zero logout). Flipped live 18:04 UTC; **first LIVE send**
+(18:05:50, ACADEMIA BYU) went out — and **within 2 seconds** the session fell into a
+sustained `code=403 Connection Failure` reconnect loop (6+ in 2 min, 0 recovery,
+`up:false`), a signature never seen in 3.5 days of soak. The phone then showed
+**"Esta cuenta no puede usar WhatsApp"** — a **permanent account ban**. The number is
+dead. **One cold message killed it.**
+
+**What it means for this codebase:**
+
+- The send-side discipline (ban-averse halt, ramp, window, at-most-once, humanized
+  cadence — §1–§6) is **correct but operates a layer above where the ban happened**.
+  WA banned the _account_ on (probably) the **cold-send behavior** itself, not just the
+  egress fingerprint. **A proxy is necessary-but-not-sufficient** — it fixes IP, not
+  "you messaged a stranger." (Caveat: this number was pre-flagged Jun 11, so it's a
+  confounded read; a fresh number + proxy _might_ last longer — but burns numbers.)
+- **Bug to fix before any retry:** `classifyDisconnect` (`baileys-manager.ts`) latches
+  HALT only on **401**. A sustained **403 "Connection Failure"** is treated as
+  `reconnect` → infinite 5s storm against a banned number (worst possible anti-ban
+  behavior; had to `systemctl stop` to end it). Treat repeated 403-in-a-window as a
+  probable block → hard backoff / HALT.
+- **Operator decision: PAUSE + reassess** (not "get a proxy and retry"). Likely pivot if
+  outreach continues: **first touch off cold-WhatsApp** (SMS/email/IG/call), WA only
+  after the prospect opts in — i.e. make it inbound, like the salones-wa product bot,
+  which never gets banned. Meta Cloud API stays ruled out (unit economics).
